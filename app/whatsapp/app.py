@@ -34,6 +34,7 @@ if os.path.exists(start_template):
     with open(start_template, "r") as f:
         start_template = f.read()
 
+# create the chat client
 whatsapp = WhatsApp(os.getenv("TOKEN"), phone_number_id=os.getenv("PHONE_NUMBER_ID"))
 
 chat_options = dict(
@@ -52,13 +53,6 @@ model_options = dict(
     frequency_penalty=os.environ.get("FREQUENCY_PENALTY", 0.3),
     presence_penalty=os.environ.get("PRESENCE_PENALTY", 0.1),
     n=1,
-)
-
-# create the chat client
-chat_client = TwilioWhatsAppClient(
-    account_sid=os.environ.get("TWILIO_ACCOUNT_SID"),
-    auth_token=os.environ.get("TWILIO_AUTH_TOKEN"),
-    from_number=os.environ.get("TWILLIO_WHATSAPP_NUMBER", "+14155238886"),
 )
 
 # instance the app

@@ -1,7 +1,10 @@
 import os, logging
 from datetime import datetime
+from heyoo import WhatsApp
 from dotenv import find_dotenv, load_dotenv
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, make_response
+from langchain import OpenAI, ConversationChain, LLMChain, PromptTemplate
+from langchain.memory import ConversationBufferWindowMemory
 from chat.clients.twilio import TwilioWhatsAppClient, TwilioWhatsAppMessage
 from chat.handlers.openai import (
     chat_completion as chatgpt_completion,
@@ -31,6 +34,8 @@ if os.path.exists(start_template):
     with open(start_template, "r") as f:
         start_template = f.read()
 
+whatsapp = WhatsApp(os.getenv("TOKEN"), phone_number_id=os.getenv("PHONE_NUMBER_ID"))
+
 chat_options = dict(
     model=os.environ.get("CHAT_MODEL", "gpt-3.5-turbo"),
     agent_name=os.environ.get("AGENT_NAME"),
@@ -59,23 +64,44 @@ chat_client = TwilioWhatsAppClient(
 # instance the app
 app = Flask(__name__)
 
+@app.get("/whatsapp/reply", methods=["GET"])
+def verify_token():
+    if request.args.get("hub.verify_token") == VERIFY_TOKEN:
+        logging.info("Verified webhook")
+        response = make_response(request.args.get("hub.challenge"), 200)
+        response.mimetype = "text/plain"
+        return response
+    logging.error("Webhook Verification failed")
+    return "Invalid verification token"
 
 @app.route("/whatsapp/reply", methods=["POST"])
 async def reply_to_whatsapp_message():
     logger.info(f"Obtained request: {dict(request.values)}")
     # create the chat manager
+    request = request.get_json()
+    
     sender = Sender(
-        phone_number=request.values.get("From"),
-        name=request.values.get("ProfileName", request.values.get("From")),
+        phone_number=whatsapp.get_mobile(request),
+        name=whatsapp.get_name(request),
+        memory=ConversationBufferWindowMemory(k=2),
     )
     chat = OpenAIChatManager.get_or_create(sender, logger=logger, **chat_options)
-    chat.start_system_message = chat_options.get("start_system_message").format(
-        user=sender.name, today=datetime.now().strftime("%Y-%m-%d")
+    #chat.start_system_message = chat_options.get("start_system_message").format(
+    #    user=sender.name, today=datetime.now().strftime("%Y-%m-%d")
+    #)
+    
+    prompt = PromptTemplate(
+    input_variables=["user", "date"], 
+    template=chat_options.get("start_system_message")
     )
-    chat.messages[0] = chat.make_message(chat.start_system_message, role="system")
-    # parse and process the message
-    new_message = chat_client.parse_request_values(request.values)
-    msg = verify_and_process_media(new_message, chat)
+    
+    chatgpt_chain = LLMChain(
+    llm=OpenAI(temperature=0), 
+    prompt=prompt, 
+    verbose=True, 
+    memory=chat.memory,
+    )
+    
     # check if the conversation should end
     if message_empty_or_goodbye(msg, chat):
         return jsonify({"status": "ok"})
@@ -83,26 +109,19 @@ async def reply_to_whatsapp_message():
     logger.info("Chat has %d messages", len(chat.messages))
     if len(chat.messages) == 1:
         await ensure_user_language(chat, text=msg)
-    # generate the reply
-    chat.add_message(msg, role="user")
-    reply = chatgpt_completion(chat.messages, **model_options).strip()
+
+    reply = chatgpt_chain.predict(human_input=whatsapp.get_message(request))
     logger.info(f"Generated reply of length {len(reply)}")
-    # check if the reply is requesting an image generation
-    reply, img_prompt = verify_image_generation(reply)
+    
     # send the reply
     chat_client.send_message(
         reply,
         chat.sender.phone_number,
         on_failure="Sorry, I didn't understand that. Please try again.",
     )
-    # add the reply to the chat
-    chat.add_message(reply, role="assistant")
-    # if the reply was requesting an image generation, send the image
-    if img_prompt:
-        chat.add_message(f"[img:\"{img_prompt}\"]", role="system")
-        await check_and_send_image_generation(img_prompt, chat, client=chat_client)
+    
     # save the chat
-    chat.save()
+    #chat.save()
     logger.info(
         f"--------------\nConversation:\n{chat.get_conversation()}\n----------------"
     )

@@ -2,6 +2,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import logging
 from typing import Union, Callable
+from langchain.memory import ConversationBufferWindowMemory
+import langchain
 # from apscheduler.schedulers.background import BackgroundScheduler
 
 managers = {}
@@ -51,8 +53,8 @@ class OpenAIChatManager:
     def get_or_create(cls, sender: "Sender", model: str = "gpt-3.5-turbo", **kwargs):
         if sender.phone_number not in managers:
             managers[sender.phone_number] = cls(sender, model)
-        for k, v in kwargs.items():
-            setattr(managers[sender.phone_number], k, v)
+            for k, v in kwargs.items():
+                setattr(managers[sender.phone_number], k, v)
         return managers[sender.phone_number]
 
     def save(self):
@@ -124,3 +126,4 @@ class Sender:
     max_messages: int = 50
     voice_transcription: bool = True
     transcription_language: str = "en-US"
+    memory: langchain.memory = ConversationBufferWindowMemory(k=2)

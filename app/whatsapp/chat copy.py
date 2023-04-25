@@ -10,7 +10,7 @@ managers = {}
 
 
 @dataclass
-class OpenAIChatManager:
+class ChatManager:
     sender: "Sender"
     model: str = "gpt-3.5-turbo"
     agent_name: str = None
@@ -48,6 +48,14 @@ class OpenAIChatManager:
         self.add_message(self.start_system_message, role="system")
         if self.logger is None:
             self.logger = logging.getLogger(__name__)
+
+    def register_modifier(self, modifier):
+        self.modifiers.append(modifier)
+
+    def generate_reply(self, reply):
+        for modifier in self.modifiers:
+            reply = modifier(reply)
+        return reply
 
     @classmethod
     def get_or_create(cls, sender: "Sender", model: str = "gpt-3.5-turbo", **kwargs):
